@@ -33,6 +33,29 @@ Why these choices:
 - **Flink SQL.** Flink commits to Iceberg exactly once on each checkpoint. It's deployed through the Flink SQL
   Gateway REST API, so the same job runs on a local cluster, Kubernetes or a managed Flink service.
 
+## AI ops: a thin decision layer
+
+Every generated project includes `ops/`, a small layer that decides **what to alert and how to self-heal**:
+
+- **Signals** come from the pipeline's own contracts: the Flink job's state and checkpoints, Kafka consumer lag,
+  and the last dbt run's results.
+- **Rules** always produce a baseline decision.
+- **An LLM refines it** through the gateway you configure (`LLM_GATEWAY_URL`, `LLM_API_KEY`, `LLM_MODEL`; any
+  OpenAI-compatible endpoint such as LiteLLM, Portkey, Kong, OpenRouter, Azure OpenAI or vLLM). It sets severity,
+  likely cause and summary, and picks actions **from an allowlist only**.
+- **Code enforces the guardrails:**
+  - mode: `advise` by default, `act` to run fixes;
+  - cooldowns and hourly caps;
+  - critical incidents are never silenced;
+  - secrets are redacted and no data rows are ever sent.
+- **Alerts** go to a Slack-compatible webhook, deduplicated, with a resolved notice. Every decision is written to
+  an audit log.
+- **Gateway problems:** if the gateway is missing, down or returns garbage, the rules decide instead.
+
+Actions, all through `scripts/pipeline.py`: `redeploy_landing`, `rerun_transform` and `rerun_failed_models`. With
+Dagster, a sensor runs the check every 2 minutes and after any failed run. See `docs/ai_ops.md` in a generated
+project.
+
 ## Usage
 
 ```bash
@@ -46,6 +69,7 @@ cookiecutter gh:<owner>/data-engineering-cookiecutter --no-input target=snowflak
 |--------|--------|---------|
 | `target` | `duckdb`, `databricks`, `snowflake` | Where dbt builds bronze/silver/gold from the Iceberg landing tables |
 | `orchestrator` | `dagster`, `none` | `dagster`: open-source Dagster with landing/bronze/silver/gold assets, dbt tests as asset checks, schedule and landing-job sensor |
+| `ai_ops_mode` | `advise`, `act`, `off` | AI ops: an LLM behind **your** OpenAI-compatible gateway decides alerts and self-healing; `advise` only recommends, `act` also runs allowlisted fixes |
 | `payload_format` | `debezium`, `json` | Debezium CDC envelope (ordered by `ts_ms`), or plain JSON rows with tombstone deletes (ordered by offset) |
 | `topic_prefix` | `app.public` | Topic prefix for the example entities |
 | `landing_namespace` | `landing` | Iceberg namespace of the landing tables |

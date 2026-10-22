@@ -14,5 +14,7 @@ ingestion/build/
 # local warehouses
 *.duckdb
 *.duckdb.wal
+# AI ops state and audit log
+.ops/
 # Dagster
 .dagster_home/

@@ -1,0 +1,34 @@
+# AI ops: a thin decision layer for self-healing and alerting.
+#
+# Deterministic code collects health signals and enforces every guardrail; an LLM behind YOUR gateway
+# (any OpenAI-compatible endpoint: LiteLLM, Portkey, Kong, OpenRouter, Azure OpenAI, vLLM, ...) only
+# chooses severity, explanation and actions from the allowlist below. Without a gateway configured,
+# the built-in rules decide. See docs/ai_ops.md.
+#
+# Environment: LLM_GATEWAY_URL (e.g. https://gateway.example.com/v1), LLM_API_KEY, LLM_MODEL,
+#              ALERT_WEBHOOK_URL (Slack-compatible), AI_OPS_MODE (overrides `mode`).
+
+# off:    no checks
+# advise: diagnose and alert with recommendations; never acts
+# act:    additionally runs allowlisted actions, within cooldowns and hourly caps
+mode: "{{ cookiecutter.ai_ops_mode }}"   # quoted: YAML would read a bare off as false
+
+llm:
+  timeout_seconds: 30
+  max_output_tokens: 800
+  temperature: 0
+
+thresholds:
+  checkpoint_max_age_minutes: 5     # no successful Flink checkpoint (= Iceberg commit) for this long
+  consumer_lag_warning: 10000       # Kafka messages not yet landed
+  transform_max_age_minutes: 30     # last successful dbt build older than this
+
+actions:
+  redeploy_landing:    {allowed: true, cooldown_minutes: 15, max_per_hour: 2}
+  rerun_transform:     {allowed: true, cooldown_minutes: 10, max_per_hour: 3}
+  rerun_failed_models: {allowed: true, cooldown_minutes: 10, max_per_hour: 3}
+
+alerts:
+  min_severity: warning    # info | warning | critical
+  suppress_minutes: 60     # an unchanged incident is not re-alerted within this window
+  notify_resolved: true    # send a message when all incidents have cleared

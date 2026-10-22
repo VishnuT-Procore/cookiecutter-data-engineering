@@ -2,9 +2,24 @@
   "project_name": "Orders Medallion",
   "project_slug": "{{ cookiecutter.project_name.lower().strip().replace(' ', '_').replace('-', '_') }}",
   "author_name": "Data Engineering",
-  "target": ["duckdb", "databricks", "snowflake"],
-  "orchestrator": ["dagster", "none"],
-  "payload_format": ["debezium", "json"],
+  "target": [
+    "duckdb",
+    "databricks",
+    "snowflake"
+  ],
+  "orchestrator": [
+    "dagster",
+    "none"
+  ],
+  "ai_ops_mode": [
+    "advise",
+    "act",
+    "off"
+  ],
+  "payload_format": [
+    "debezium",
+    "json"
+  ],
   "topic_prefix": "app.public",
   "landing_namespace": "landing",
   "__prompts__": {
@@ -27,12 +42,19 @@
       "json": "Plain JSON row per message, tombstone (null value) = delete"
     },
     "topic_prefix": "Kafka topic prefix for the example entities",
-    "landing_namespace": "Iceberg namespace for the landing tables"
+    "landing_namespace": "Iceberg namespace for the landing tables",
+    "ai_ops_mode": {
+      "__prompt__": "AI ops mode (LLM via your OpenAI-compatible gateway decides alerts/self-healing)",
+      "advise": "advise: diagnose + alert with recommendations, never acts",
+      "act": "act: also runs allowlisted fixes within cooldowns/caps",
+      "off": "off: no checks"
+    }
   },
   "_copy_without_render": [
     "scripts/*",
     "ingestion/*.py",
     "ingestion/flink/*.py",
+    "ops/*",
     "dbt/macros/*",
     "dbt/models/*",
     "dbt/tests/*",

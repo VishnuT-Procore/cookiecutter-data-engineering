@@ -28,6 +28,8 @@ COMMON_FILES = [
     "dbt/dbt_project.yml", "dbt/profiles.yml", "dbt/macros/adapter_interface.sql", "dbt/macros/medallion.sql",
     "dbt/models/landing/_sources.yml", "dbt/models/bronze/bronze_customers.sql",
     "dbt/models/silver/silver_orders.sql", "dbt/models/gold/fct_orders.sql",
+    "config/ops.yml", "docs/ai_ops.md", "tests/test_ops.py", "ops/__main__.py", "ops/cli.py", "ops/llm.py",
+    "ops/rules.py", "ops/signals.py", "ops/actions.py", "ops/alerts.py", "ops/redact.py", "ops/prompts/decide.md",
 ]
 TARGET_FILES = {
     "duckdb": ["dbt/macros/adapter_duckdb.sql", "tests/test_end_to_end.py"],
@@ -160,6 +162,14 @@ def test_generator_rejects_invalid_config(tmp_path, mutate, message):
     result = run([sys.executable, "scripts/generate.py"], project)
     assert result.returncode == 1
     assert message in result.stderr
+
+
+@pytest.mark.parametrize("mode", ["advise", "act", "off"])
+def test_ai_ops_mode_is_configurable(tmp_path, mode):
+    project = bake(tmp_path, target="duckdb", ai_ops_mode=mode)
+    assert yaml.safe_load((project / "config" / "ops.yml").read_text())["mode"] == mode
+    # the prompt keeps its literal JSON braces (not rendered by cookiecutter)
+    assert '"severity": "info" | "warning" | "critical"' in (project / "ops/prompts/decide.md").read_text().replace("{{", "{")
 
 
 def test_invalid_slug_is_rejected(tmp_path):

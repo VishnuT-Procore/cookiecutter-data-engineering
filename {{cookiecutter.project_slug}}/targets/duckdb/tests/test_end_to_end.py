@@ -141,3 +141,72 @@ def test_lakehouse_end_to_end(stack):
     dbt_build()
     assert warehouse("select count(*) from dev_bronze.bronze_customers")[0][0] == bronze
     assert warehouse("select * from dev_silver.silver_customers order by id") == snapshot
+
+
+# --- AI ops: self-healing on the real stack -------------------------------------------------------
+
+class _Recorder:
+    """Tiny HTTP server: fake OpenAI-compatible gateway or fake Slack webhook."""
+
+    def __init__(self, reply: dict):
+        import json
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.requests = []
+        recorder = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                recorder.requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                data = json.dumps(reply).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+
+def ops_check(env: dict) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(ROOT / "scripts" / "pipeline.py"), "ops", "check"],
+                          cwd=ROOT, capture_output=True, text=True, env={**os.environ, **env})
+
+
+def test_ai_ops_heals_a_stopped_landing_job(stack):
+    import json
+
+    if landing.main(["status"]) != 0:
+        landing.deploy()
+    landing.main(["cancel"])
+    deadline = time.monotonic() + 60
+    while landing.running_jobs(landing.job_name()) and time.monotonic() < deadline:
+        time.sleep(1)
+
+    decision = {"severity": "critical", "summary": "Landing job is not running; data is not landing.",
+                "root_cause": "The Flink job was cancelled.", "send_alert": True, "confidence": 0.95,
+                "actions": [{"name": "redeploy_landing", "reason": "restart ingestion"}]}
+    gateway = _Recorder({"model": "fake", "choices": [{"message": {"content": json.dumps(decision)}}]})
+    webhook = _Recorder({})
+    env = {"LLM_GATEWAY_URL": gateway.url + "/v1", "LLM_MODEL": "fake", "ALERT_WEBHOOK_URL": webhook.url,
+           "AI_OPS_MODE": "advise"}
+
+    advise = ops_check(env)
+    assert advise.returncode == 1, advise.stdout + advise.stderr
+    assert "redeploy_landing: recommended" in advise.stdout
+    assert landing.main(["status"]) == 1, "advise mode must not act"
+    assert "`redeploy_landing`: recommended" in webhook.requests[-1]["text"]
+
+    act = ops_check({**env, "AI_OPS_MODE": "act"})
+    assert "redeploy_landing: succeeded" in act.stdout, act.stdout + act.stderr
+    assert landing.main(["status"]) == 0
+    assert "`redeploy_landing`: succeeded" in webhook.requests[-1]["text"]
+
+    healthy = ops_check({**env, "AI_OPS_MODE": "act"})
+    assert healthy.returncode == 0, healthy.stdout + healthy.stderr
+    assert "[RESOLVED]" in webhook.requests[-1]["text"]

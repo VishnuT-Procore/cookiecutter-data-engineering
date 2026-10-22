@@ -8,7 +8,8 @@ export
 .DEFAULT_GOAL := help
 
 .PHONY: help install install-plugins up down sample sample-phase1 sample-phase2 generate check-generated \
-        ingest-deploy ingest-status ingest-cancel transform check test
+        ingest-deploy ingest-status ingest-cancel transform check test \
+        ops-check ops-explain ops-test-alert
 
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -53,6 +54,15 @@ ingest-cancel: ## Stop the landing job
 
 transform: ## dbt build on the target: bronze -> silver -> gold, with tests
 	$(PIPELINE) transform
+
+ops-check: ## AI ops: diagnose, alert and (in act mode) self-heal
+	$(PIPELINE) ops check
+
+ops-explain: ## AI ops: show the health snapshot and decision, without alerting or acting
+	$(PIPELINE) ops explain
+
+ops-test-alert: ## Send a test message to ALERT_WEBHOOK_URL
+	$(PIPELINE) ops test-alert
 
 check: ## Generated files up to date and dbt project parses
 	$(PIPELINE) check

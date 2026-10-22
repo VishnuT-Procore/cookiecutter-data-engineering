@@ -7,6 +7,7 @@ so swapping the orchestrator or the target never touches pipeline logic.
     python scripts/pipeline.py ingest cancel
     python scripts/pipeline.py transform [dbt args...]     # dbt build: bronze -> silver -> gold + tests
     python scripts/pipeline.py check                       # generated files up to date + dbt parse
+    python scripts/pipeline.py ops check|explain|test-alert  # AI ops: diagnose, alert, self-heal (docs/ai_ops.md)
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ def main(argv: list[str]) -> int:
         return run([sys.executable, str(ROOT / "ingestion" / "landing.py"), *rest])
     if command == "transform":
         return run([*DBT, "build", *DBT_ARGS, *rest])
+    if command == "ops":
+        return run([sys.executable, "-m", "ops", *rest])
     if command == "check":
         return run([sys.executable, str(ROOT / "scripts" / "generate.py"), "--check"]) or run([*DBT, "parse", *DBT_ARGS])
     print(f"unknown command {command!r}\n{__doc__}", file=sys.stderr)

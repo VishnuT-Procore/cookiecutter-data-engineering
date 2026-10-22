@@ -36,4 +36,5 @@ def test_definitions_cover_every_layer():
     assert any(c.asset_key.to_user_string() == "gold/fct_orders" for c in graph.asset_check_keys)
     assert defs.resolve_job_def("medallion")
     assert defs.resolve_schedule_def("medallion_schedule")
-    assert defs.resolve_sensor_def("landing_job_running")
+    assert defs.resolve_sensor_def("ai_ops")
+    assert defs.resolve_sensor_def("ai_ops_on_run_failure")

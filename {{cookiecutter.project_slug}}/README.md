@@ -28,6 +28,7 @@ The pipeline is built from contracts, so the target and the orchestrator are rep
 | gold   | Hand-written models: joins (`fct_orders`, `customer_order_summary`) and breakdowns (`dim_customer_addresses`) | Exclude deleted rows |
 
 Target details: **[docs/target.md](docs/target.md)**.
+AI ops (alerting and self-healing through your LLM gateway, mode `{{ cookiecutter.ai_ops_mode }}`): **[docs/ai_ops.md](docs/ai_ops.md)**.
 {%- if cookiecutter.orchestrator != 'none' %}
 Orchestration: **[docs/orchestration.md](docs/orchestration.md)**.
 {%- endif %}
@@ -64,7 +65,8 @@ ingestion/                   Kafka -> Iceberg landing (Flink SQL, target-agnosti
   sql/landing.sql            generated Flink job
   flink/                     Flink image: pinned Kafka + Iceberg jars
 dbt/                         bronze/silver (generated) and gold models, adapter interface macros
-scripts/pipeline.py          the run contract used by make and orchestrators
+scripts/pipeline.py          the run contract used by make, orchestrators and AI ops
+ops/, config/ops.yml         AI ops: signals -> rules -> LLM decision -> guarded actions -> alerts
 scripts/generate.py          validates config, renders generated files
 compose.yaml                 local lakehouse
 target.mk, docs/target.md    target plugin

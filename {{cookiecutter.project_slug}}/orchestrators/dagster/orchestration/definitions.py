@@ -2,7 +2,9 @@
 
 * landing/<entity>  external assets: Iceberg tables kept up to date by the Flink landing job
 * bronze/silver/gold: every dbt model is an asset, every dbt test an asset check (dbt adapter = target)
-* job `medallion` + schedule, and a sensor that fails its tick when the landing job is not running
+* job `medallion` + schedule
+* AI ops sensors (config/ops.yml): periodic health check and a check on every failed run; they alert
+  and, in `act` mode, self-heal (redeploy landing, re-run failed models) through scripts/pipeline.py
 
 Everything goes through the pipeline's own contract (dbt project, scripts/pipeline.py), so changing the
 target or replacing Dagster needs no change here.
@@ -41,16 +43,32 @@ def medallion_dbt(context: dg.AssetExecutionContext, dbt: DbtCliResource):
     yield from dbt.cli(["build"], context=context).stream()
 
 
-@dg.sensor(minimum_interval_seconds=60, default_status=dg.DefaultSensorStatus.STOPPED)
-def landing_job_running(context: dg.SensorEvaluationContext):
-    """Fails its tick (visible and alertable in Dagster) when the landing job is not running."""
-    result = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "pipeline.py"), "ingest", "status"],
-        cwd=ROOT, capture_output=True, text=True,
+def _ops_check(trigger: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "pipeline.py"), "ops", "check", "--trigger", trigger],
+        cwd=ROOT, capture_output=True, text=True, timeout=1800,
     )
-    if result.returncode != 0:
-        raise RuntimeError((result.stdout + result.stderr).strip() or "landing job is not running")
+
+
+def _report(result: subprocess.CompletedProcess) -> dg.SkipReason:
+    """Exit 0 = healthy, 1 = incidents handled by ai ops (alerted/acted), 2 = ai ops itself failed."""
+    if result.returncode >= 2:
+        raise RuntimeError((result.stdout + result.stderr).strip() or "ops check failed")
     return dg.SkipReason(result.stdout.strip())
+
+
+@dg.sensor(minimum_interval_seconds=120, default_status=dg.DefaultSensorStatus.STOPPED)
+def ai_ops(context: dg.SensorEvaluationContext):
+    """Periodic health check: landing job, Kafka lag, last dbt run. Alerts and self-heals per config/ops.yml."""
+    return _report(_ops_check("schedule"))
+
+
+@dg.run_failure_sensor(default_status=dg.DefaultSensorStatus.STOPPED)
+def ai_ops_on_run_failure(context: dg.RunFailureSensorContext):
+    """A failed run triggers an immediate check (e.g. re-run failed dbt models, or alert with the cause)."""
+    result = _ops_check(f"run_failed:{context.dagster_run.job_name}")
+    if result.returncode >= 2:
+        raise RuntimeError((result.stdout + result.stderr).strip() or "ops check failed")
 
 
 medallion = dg.define_asset_job("medallion", selection=dg.AssetSelection.assets(medallion_dbt))
@@ -59,6 +77,6 @@ defs = dg.Definitions(
     assets=[*landing_tables, medallion_dbt],
     jobs=[medallion],
     schedules=[dg.ScheduleDefinition(job=medallion, cron_schedule="*/5 * * * *")],
-    sensors=[landing_job_running],
+    sensors=[ai_ops, ai_ops_on_run_failure],
     resources={"dbt": DbtCliResource(project_dir=DBT_PROJECT)},
 )
