@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -v tests
+
+  # Generate a project for every target/format and run that project's own test suite.
+  generated-project:
+    needs: bake
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [postgres, snowflake, databricks]
+        payload_format: [debezium, json]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        if: matrix.target == 'databricks'
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Generate project
+        run: |
+          python -m pip install cookiecutter
+          cookiecutter . --no-input -o "$RUNNER_TEMP/out" \
+            target=${{ matrix.target }} payload_format=${{ matrix.payload_format }}
+      - name: Test generated project
+        working-directory: ${{ runner.temp }}/out/orders_medallion
+        run: |
+          python -m pip install -r requirements-dev.txt
+          make check-generated
+          make test

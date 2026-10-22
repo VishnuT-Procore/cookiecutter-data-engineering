@@ -1,0 +1,117 @@
+# Databricks Asset Bundle: `databricks bundle deploy -t dev` then `databricks bundle run medallion -t dev`.
+bundle:
+  name: {{ cookiecutter.project_slug }}
+
+variables:
+  catalog:
+    description: Unity Catalog catalog for bronze/silver/gold.
+    default: main
+  bronze_schema:
+    default: bronze
+  silver_schema:
+    default: silver
+  gold_schema:
+    default: gold
+  checkpoint_root:
+    description: Volume path for streaming checkpoints.
+    default: /Volumes/main/default/checkpoints/{{ cookiecutter.project_slug }}
+  kafka_bootstrap_servers:
+    default: "<broker-1>:9092,<broker-2>:9092"
+  kafka_secret_scope:
+    description: Secret scope holding key "kafka-options" (JSON of extra Kafka options). Empty = none.
+    default: ""
+  trigger:
+    description: availableNow (batch-style runs) or an interval such as "1 minute" (continuous).
+    default: availableNow
+  spark_version:
+    default: 15.4.x-scala2.12
+  node_type_id:
+    default: i3.xlarge
+
+artifacts:
+  medallion_wheel:
+    type: whl
+    path: .
+    build: python -m pip wheel --no-deps -w dist .
+
+resources:
+  jobs:
+    medallion:
+      name: {{ cookiecutter.project_slug }}-medallion
+      schedule:
+        quartz_cron_expression: "0 0/15 * * * ?"
+        timezone_id: UTC
+        pause_status: PAUSED
+      max_concurrent_runs: 1
+      job_clusters:
+        - job_cluster_key: main
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type_id}
+            num_workers: 1
+            data_security_mode: SINGLE_USER
+            spark_conf:
+              spark.databricks.delta.schema.autoMerge.enabled: "true"
+      tasks:
+        - task_key: bronze
+          job_cluster_key: main
+          libraries: [{whl: ./dist/*.whl}]
+          python_wheel_task:
+            package_name: medallion
+            entry_point: medallion
+            parameters:
+              - bronze
+              - --pipeline=${workspace.file_path}/config/pipeline.yml
+              - --catalog=${var.catalog}
+              - --bronze-schema=${var.bronze_schema}
+              - --silver-schema=${var.silver_schema}
+              - --gold-schema=${var.gold_schema}
+              - --checkpoint-root=${var.checkpoint_root}
+              - --trigger=${var.trigger}
+              - --kafka-bootstrap-servers=${var.kafka_bootstrap_servers}
+              - --kafka-secret-scope=${var.kafka_secret_scope}
+
+        - task_key: silver
+          depends_on: [{task_key: bronze}]
+          job_cluster_key: main
+          libraries: [{whl: ./dist/*.whl}]
+          python_wheel_task:
+            package_name: medallion
+            entry_point: medallion
+            parameters:
+              - silver
+              - --pipeline=${workspace.file_path}/config/pipeline.yml
+              - --catalog=${var.catalog}
+              - --bronze-schema=${var.bronze_schema}
+              - --silver-schema=${var.silver_schema}
+              - --gold-schema=${var.gold_schema}
+              - --checkpoint-root=${var.checkpoint_root}
+              - --trigger=${var.trigger}
+
+        - task_key: gold
+          depends_on: [{task_key: silver}]
+          job_cluster_key: main
+          libraries: [{whl: ./dist/*.whl}]
+          python_wheel_task:
+            package_name: medallion
+            entry_point: medallion
+            parameters:
+              - gold
+              - --pipeline=${workspace.file_path}/config/pipeline.yml
+              - --catalog=${var.catalog}
+              - --bronze-schema=${var.bronze_schema}
+              - --silver-schema=${var.silver_schema}
+              - --gold-schema=${var.gold_schema}
+              - --sql-dir=${workspace.file_path}/gold
+
+targets:
+  dev:
+    mode: development
+    default: true
+    variables:
+      bronze_schema: ${workspace.current_user.short_name}_bronze
+      silver_schema: ${workspace.current_user.short_name}_silver
+      gold_schema: ${workspace.current_user.short_name}_gold
+      checkpoint_root: /Volumes/main/default/checkpoints/{{ cookiecutter.project_slug }}_${workspace.current_user.short_name}
+  prod:
+    mode: production

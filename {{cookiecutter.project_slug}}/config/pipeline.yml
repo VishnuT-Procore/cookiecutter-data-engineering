@@ -1,0 +1,43 @@
+# Single source of truth for the pipeline.
+#
+# Every entity is one Kafka topic. Its changes land in bronze (append-only change log),
+# the latest version per primary key is kept in silver, and gold models are hand-written
+# on top of silver. After editing this file run `make generate` (CI runs `make check-generated`).
+#
+# Column types: string, integer, bigint, double, boolean, date, timestamp (ISO-8601 string),
+#               timestamp_ms / timestamp_us (epoch millis / micros), decimal(p,s)
+
+project: {{ cookiecutter.project_slug }}
+target: {{ cookiecutter.target }}
+
+# debezium: value is a Debezium envelope {before, after, op, ts_ms}; ordering by ts_ms then offset.
+# json:     value is the full row; a tombstone (null value) deletes the key; ordering by Kafka offset.
+payload_format: {{ cookiecutter.payload_format }}
+
+# Namespace where raw Kafka records land (Postgres/Snowflake schema; Databricks uses bronze directly).
+raw_schema: {{ cookiecutter.raw_schema }}
+
+entities:
+  - name: customers
+    topic: {{ cookiecutter.topic_prefix }}.customers
+    description: Customer master data.
+    primary_key: [id]
+    columns:
+      - {name: id, type: bigint, description: Customer id.}
+      - {name: name, type: string}
+      - {name: email, type: string}
+      - {name: street, type: string}
+      - {name: city, type: string}
+      - {name: country, type: string}
+      - {name: updated_at, type: timestamp, description: Last change in the source system.}
+
+  - name: orders
+    topic: {{ cookiecutter.topic_prefix }}.orders
+    description: Customer orders.
+    primary_key: [order_id]
+    columns:
+      - {name: order_id, type: bigint}
+      - {name: customer_id, type: bigint}
+      - {name: status, type: string}
+      - {name: amount, type: "decimal(18,2)"}
+      - {name: updated_at, type: timestamp}

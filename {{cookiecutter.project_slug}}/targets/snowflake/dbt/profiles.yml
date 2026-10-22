@@ -1,0 +1,19 @@
+{{ cookiecutter.project_slug }}:
+  target: "{% raw %}{{ env_var('DBT_TARGET', 'dev') }}{% endraw %}"
+  outputs:
+    dev: &snowflake
+      type: snowflake
+      account: "{% raw %}{{ env_var('SNOWFLAKE_ACCOUNT') }}{% endraw %}"
+      user: "{% raw %}{{ env_var('SNOWFLAKE_USER') }}{% endraw %}"
+      # Key-pair auth (recommended). For SSO use `authenticator: externalbrowser` instead.
+      private_key_path: "{% raw %}{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}{% endraw %}"
+      private_key_passphrase: "{% raw %}{{ env_var('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}{% endraw %}"
+      role: "{% raw %}{{ env_var('SNOWFLAKE_ROLE', 'TRANSFORMER') }}{% endraw %}"
+      database: "{% raw %}{{ env_var('SNOWFLAKE_DATABASE', '{% endraw %}{{ cookiecutter.project_slug | upper }}{% raw %}') }}{% endraw %}"
+      warehouse: "{% raw %}{{ env_var('SNOWFLAKE_WAREHOUSE', 'TRANSFORMING') }}{% endraw %}"
+      schema: "{% raw %}{{ env_var('SNOWFLAKE_SCHEMA', 'DEV') }}{% endraw %}"
+      threads: 8
+      client_session_keep_alive: false
+    prod:
+      <<: *snowflake
+      schema: ANALYTICS

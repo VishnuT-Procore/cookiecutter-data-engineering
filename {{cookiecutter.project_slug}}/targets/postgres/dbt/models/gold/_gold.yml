@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: Current customers.
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+
+  - name: dim_customer_addresses
+    description: Customer addresses, split out of silver_customers.
+    columns:
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+
+  - name: fct_orders
+    description: Current orders with customer attributes.
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+              config:
+                severity: warn  # orders may reference customers deleted upstream
+
+  - name: customer_order_summary
+    description: Order totals per current customer.
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
