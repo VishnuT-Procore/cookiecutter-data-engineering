@@ -17,6 +17,8 @@ from cookiecutter.main import cookiecutter
 TEMPLATE = Path(__file__).resolve().parents[1]
 TARGETS = ("postgres", "snowflake", "databricks")
 FORMATS = ("debezium", "json")
+ORCHESTRATORS = ("dagster", "none")
+ENGINE_TARGETS = {"none": TARGETS, "flink": ("postgres",)}
 
 COMMON_FILES = [
     "README.md", "Makefile", "target.mk", "compose.yaml", ".gitignore", ".env.example",
@@ -46,6 +48,15 @@ TARGET_MARKERS = {
     "snowflake": ["ingestion/connector.json", "ingestion/setup.sql"],
     "databricks": ["databricks.yml", "src/medallion/silver.py"],
 }
+DAGSTER_FILES = [
+    "orchestration/__init__.py", "orchestration/definitions.py", "orchestration/pipeline.py",
+    "orchestration.mk", "requirements-orchestration.txt", "docs/orchestration.md", "tests/test_orchestration.py",
+]
+FLINK_FILES = [
+    "engine.mk", "compose.flink.yaml", "flink/Dockerfile", "flink/fetch_jars.py", "flink/submit.py",
+    "flink/sql/pipeline.sql", "flink/sql/postgres_tables.sql", "docs/streaming.md", "tests/test_flink_end_to_end.py",
+]
+BATCH_ONLY_POSTGRES = ["ingestion/kafka_to_raw.py", "batch.mk", "tests/test_end_to_end.py"]
 UNRENDERED = re.compile(r"\{\{\s*cookiecutter\.|\{%-?\s*(raw|endraw)")
 
 
@@ -57,20 +68,42 @@ def run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
 
 
-@pytest.mark.parametrize("payload_format", FORMATS)
-@pytest.mark.parametrize("target", TARGETS)
-def test_bake(tmp_path, target, payload_format):
-    project = bake(tmp_path, target=target, payload_format=payload_format)
+COMBINATIONS = [
+    (target, fmt, engine, orchestrator)
+    for engine, targets in ENGINE_TARGETS.items()
+    for target in targets
+    for fmt in FORMATS
+    for orchestrator in ORCHESTRATORS
+]
 
-    assert not (project / "targets").exists()
-    for rel in COMMON_FILES + TARGET_FILES[target]:
+
+@pytest.mark.parametrize("target, payload_format, streaming_engine, orchestrator", COMBINATIONS)
+def test_bake(tmp_path, target, payload_format, streaming_engine, orchestrator):
+    project = bake(tmp_path, target=target, payload_format=payload_format,
+                   streaming_engine=streaming_engine, orchestrator=orchestrator)
+
+    for folder in ("targets", "engines", "orchestrators"):
+        assert not (project / folder).exists(), folder
+    expected = list(COMMON_FILES)
+    if streaming_engine == "flink":
+        expected += FLINK_FILES + [f for f in TARGET_FILES[target] if f not in BATCH_ONLY_POSTGRES]
+        for rel in BATCH_ONLY_POSTGRES:
+            assert not (project / rel).exists(), f"{rel} should be removed with Flink"
+    else:
+        expected += TARGET_FILES[target]
+        for rel in FLINK_FILES:
+            assert not (project / rel).exists(), rel
+    for rel in DAGSTER_FILES:
+        assert (project / rel).is_file() == (orchestrator == "dagster"), rel
+    for rel in expected:
         assert (project / rel).is_file(), rel
     for other in set(TARGETS) - {target}:
         for rel in TARGET_MARKERS[other]:
             assert not (project / rel).exists(), f"{rel} from {other} leaked into {target}"
 
     pipeline = yaml.safe_load((project / "config" / "pipeline.yml").read_text())
-    assert (pipeline["target"], pipeline["payload_format"]) == (target, payload_format)
+    assert (pipeline["target"], pipeline["payload_format"], pipeline["streaming_engine"]) == (
+        target, payload_format, streaming_engine)
 
     for path in project.rglob("*"):
         if path.is_file() and "__pycache__" not in path.parts:
@@ -129,6 +162,13 @@ def test_generator_rejects_invalid_config(tmp_path, mutate, message):
     result = run([sys.executable, "scripts/generate.py"], project)
     assert result.returncode == 1
     assert message in result.stderr
+
+
+@pytest.mark.parametrize("target", ["snowflake", "databricks"])
+def test_flink_is_rejected_for_unsupported_targets(tmp_path, target, capfd):
+    with pytest.raises(FailedHookException):
+        bake(tmp_path, target=target, streaming_engine="flink")
+    assert "not available for target" in capfd.readouterr().out
 
 
 def test_invalid_slug_is_rejected(tmp_path):

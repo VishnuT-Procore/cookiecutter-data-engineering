@@ -19,6 +19,12 @@ flowchart LR
 Which change is the latest: {% if cookiecutter.payload_format == 'debezium' %}Debezium `ts_ms`, then Kafka offset{% else %}Kafka offset. Producers must key messages by primary key, so each key stays in one partition{% endif %}.
 
 Target-specific details (setup, operations): **[docs/target.md](docs/target.md)**.
+{%- if cookiecutter.streaming_engine == 'flink' %}
+Streaming engine (Apache Flink keeps bronze/silver continuously up to date): **[docs/streaming.md](docs/streaming.md)**.
+{%- endif %}
+{%- if cookiecutter.orchestrator == 'dagster' %}
+Orchestration (Dagster, open source; `make dagster`): **[docs/orchestration.md](docs/orchestration.md)**.
+{%- endif %}
 
 ## Quick start
 

@@ -29,6 +29,8 @@ cookiecutter gh:<owner>/data-engineering-cookiecutter --no-input target=snowflak
 | `project_name` / `project_slug` | | Names; the slug is used for the dbt project, bundle, database names |
 | `target` | `postgres`, `snowflake`, `databricks` | Platform plugin to generate |
 | `payload_format` | `debezium`, `json` | Debezium CDC envelope (ordered by `ts_ms`), or plain JSON rows with tombstone deletes (ordered by Kafka offset) |
+| `streaming_engine` | `none`, `flink` | `flink`: an Apache Flink job keeps bronze/silver continuously up to date (seconds of latency). Postgres only, see below |
+| `orchestrator` | `dagster`, `none` | `dagster`: open-source Dagster assets, schedules and sensors; dbt tests become asset checks |
 | `topic_prefix` | `app.public` | Topic prefix for the example entities |
 | `raw_schema` | `raw` | Landing schema for raw Kafka records |
 
@@ -39,6 +41,34 @@ cookiecutter gh:<owner>/data-engineering-cookiecutter --no-input target=snowflak
 | **Postgres** | Python consumer ([confluent-kafka](https://github.com/confluentinc/confluent-kafka-python) + [psycopg 3](https://www.psycopg.org/)), idempotent on `(partition, offset)`, dead-letter table | [dbt-postgres](https://github.com/dbt-labs/dbt-postgres) incremental | dbt models | End-to-end on Kafka + Postgres via [Testcontainers](https://testcontainers.com/) |
 | **Snowflake** | [Snowflake Kafka Connector](https://github.com/snowflakedb/snowflake-kafka-connector) (Snowpipe Streaming); connector config generated | [dbt-snowflake](https://github.com/dbt-labs/dbt-snowflake) incremental `merge` | dbt models | Offline: connector config + `dbt parse` |
 | **Databricks** | [Spark Structured Streaming](https://spark.apache.org/streaming/) → [Delta Lake](https://delta.io/) | Streaming `foreachBatch` + Delta `MERGE` | Spark SQL files | Local Spark + Delta, run the real streaming code |
+
+### Streaming engine (`streaming_engine=flink`)
+
+[Apache Flink](https://flink.apache.org/) 1.20 (LTS) replaces the micro-batch bronze/silver build. One Flink SQL job,
+generated from `config/pipeline.yml`, reads the topics and writes:
+
+- bronze: append-only, idempotent upsert on `(partition, offset)`;
+- silver: Top-N latest-per-key upsert, safe against out-of-order events, soft deletes.
+
+Both go into Postgres through the JDBC connector, a few seconds behind Kafka. dbt keeps building gold and running the
+tests. Locally the stack is Kafka, Postgres and a Flink session cluster in Docker Compose.
+
+| Target | Flink | Why / alternative |
+|--------|-------|-------------------|
+| Postgres | Supported | Fully open source and tested end to end. |
+| Snowflake | Rejected | No supported Flink → Snowflake sink. Use Snowpipe Streaming (the default) with Dynamic Tables for low latency. |
+| Databricks | Rejected | Flink's Delta sink is append-only and can't upsert silver. Spark Structured Streaming with a short trigger gives seconds-level latency. |
+
+### Orchestrator (`orchestrator=dagster`)
+
+[Dagster](https://dagster.io/) (Apache-2.0, self-hosted; the paid Dagster+ is not needed) models raw, bronze, silver
+and gold as assets with lineage:
+
+- Postgres and Snowflake use `dagster-dbt`, so every dbt model is an asset and every dbt test is an asset check.
+- Databricks triggers the Asset Bundle job.
+- With Flink, a sensor watches that the Flink job is running.
+
+`make dagster` starts the UI.
 
 Every generated project contains:
 
@@ -54,7 +84,7 @@ Every generated project contains:
 
 ```
 cookiecutter.json
-hooks/post_gen_project.py          overlays targets/<target>/ onto the project, deletes targets/, runs the generator
+hooks/post_gen_project.py          overlays the selected plugins onto the project, deletes the rest, runs the generator
 {{cookiecutter.project_slug}}/
   config/pipeline.yml               ┐
   scripts/generate.py               │ common to every target
@@ -62,7 +92,14 @@ hooks/post_gen_project.py          overlays targets/<target>/ onto the project, 
   compose.yaml  Makefile  README.md ┘
   targets/
     postgres/  snowflake/  databricks/   ← one self-contained plugin per target
+  engines/flink/postgres/              ← optional streaming engine, per supported target
+  orchestrators/dagster/common/        ← optional orchestrator: shared part
+  orchestrators/dagster/<target>/      ←                         target-specific part
 ```
+
+Plugins are overlaid in this order: target, engine, orchestrator. A plugin can add files, and it can delete files
+listed in its `_remove.txt` (Flink removes the batch loader this way), but it can never overwrite one. Plugins add make
+targets through `target.mk`, `engine.mk` and `orchestration.mk`, and Docker services through `compose.*.yaml` files.
 
 A plugin mirrors the project layout. Its files are added to the generated project; it may not overwrite common
 files. Every plugin provides:
@@ -95,8 +132,13 @@ pip install -r requirements-dev.txt
 pytest tests                      # renders every target x format and checks the output
 ```
 
-CI also generates each target × payload format and runs that project's own `make check-generated` and
-`make test`: the Postgres end-to-end test, Databricks local Spark tests and Snowflake offline checks.
+CI also generates projects for each target × payload format, with Dagster, plus the Flink and no-orchestrator
+variants. It runs each project's own `make check-generated` and `make test`:
+
+- Postgres (batch and Flink) end-to-end tests on Docker;
+- Databricks local Spark tests;
+- Snowflake offline checks;
+- Dagster definition tests, plus a real Dagster job run on Postgres.
 
 ## Local environment: why Docker Compose + Testcontainers
 

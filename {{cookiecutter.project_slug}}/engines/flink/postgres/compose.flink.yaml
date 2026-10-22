@@ -1,0 +1,35 @@
+# Apache Flink session cluster for the streaming bronze/silver job.
+x-flink: &flink
+  image: {{ cookiecutter.project_slug }}-flink:1.20
+  volumes:
+    - ./flink/build:/opt/flink/build:ro
+
+services:
+  flink-jobmanager:
+    <<: *flink
+    build: ./flink
+    command: jobmanager
+    ports:
+      - "8081:8081"
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        rest.address: flink-jobmanager
+        state.checkpoints.dir: file:///tmp/flink-checkpoints
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8081'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  flink-taskmanager:
+    <<: *flink
+    command: taskmanager
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 4
+        state.checkpoints.dir: file:///tmp/flink-checkpoints

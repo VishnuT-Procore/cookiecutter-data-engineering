@@ -15,3 +15,8 @@ spark-warehouse/
 metastore_db/
 derby.log
 .databricks/
+# Flink (downloaded connector jars, rendered job SQL)
+flink/lib/
+flink/build/
+# Dagster
+.dagster_home/

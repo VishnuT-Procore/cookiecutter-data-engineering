@@ -6,16 +6,19 @@ export
 
 .DEFAULT_GOAL := help
 
+# compose.yaml first, then every plugin compose file (compose.override.yaml, compose.flink.yaml, ...).
+COMPOSE := docker compose -f compose.yaml $(addprefix -f ,$(filter-out compose.yaml,$(sort $(wildcard compose*.yaml))))
+
 .PHONY: help up down sample sample-phase1 sample-phase2 generate check-generated
 
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 up: ## Start local Kafka (and target services) with Docker Compose
-	docker compose up -d --wait
+	$(COMPOSE) up -d --wait --build
 
 down: ## Stop local services and delete their volumes
-	docker compose down -v
+	$(COMPOSE) down -v
 
 sample: ## Produce both phases of the sample change events to Kafka
 	$(PYTHON) scripts/produce_sample_events.py --phase all
@@ -33,3 +36,5 @@ check-generated: ## Fail if generated files are stale (CI)
 	$(PYTHON) scripts/generate.py --check
 
 include target.mk
+-include engine.mk
+-include orchestration.mk

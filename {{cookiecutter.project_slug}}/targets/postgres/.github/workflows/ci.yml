@@ -13,7 +13,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python -m pip install -r requirements-dev.txt
+      - run: make install
       - run: make check-generated
       - run: dbt parse --project-dir dbt --profiles-dir dbt
       - run: make test

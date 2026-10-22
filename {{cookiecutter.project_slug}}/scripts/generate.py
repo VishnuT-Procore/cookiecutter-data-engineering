@@ -27,6 +27,7 @@ COLUMN_TYPE = re.compile(
     r"^(string|integer|bigint|double|boolean|date|timestamp|timestamp_ms|timestamp_us|decimal\(\d+,\s*\d+\))$"
 )
 PAYLOAD_FORMATS = ("debezium", "json")
+STREAMING_ENGINES = ("none", "flink")
 # Columns added by bronze; entity columns must not collide with them.
 METADATA_COLUMNS = (
     "_op",
@@ -58,6 +59,9 @@ def load_pipeline(path: Path = CONFIG_PATH) -> dict:
 
     if cfg["payload_format"] not in PAYLOAD_FORMATS:
         errors.append(f"payload_format must be one of {PAYLOAD_FORMATS}")
+    cfg.setdefault("streaming_engine", "none")
+    if cfg["streaming_engine"] not in STREAMING_ENGINES:
+        errors.append(f"streaming_engine must be one of {STREAMING_ENGINES}")
     if not IDENTIFIER.match(str(cfg["raw_schema"])):
         errors.append(f"raw_schema '{cfg['raw_schema']}' is not a valid identifier")
     if not cfg["entities"]:
