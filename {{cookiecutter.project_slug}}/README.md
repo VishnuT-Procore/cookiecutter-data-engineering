@@ -1,29 +1,35 @@
 # {{ cookiecutter.project_name }}
 
-Kafka → **{{ cookiecutter.target }}** medallion pipeline, generated from the data-engineering cookiecutter.
+Kafka → Apache Iceberg landing → **{{ cookiecutter.target }}** medallion pipeline{% if cookiecutter.orchestrator != 'none' %}, orchestrated by **{{ cookiecutter.orchestrator }}**{% endif %}.
+Generated from the data-engineering cookiecutter.
 
 ```mermaid
 flowchart LR
-    K[(Kafka topics)] --> R[raw / landing]
-    R --> B[bronze<br/>every change, append-only]
-    B --> S[silver<br/>latest version per key]
+    K[(Kafka)] -->|Flink, append-only<br/>seconds| L[(Iceberg landing<br/>open format)]
+    L -->|dbt on {{ cookiecutter.target }}| B[bronze<br/>every change]
+    B --> S[silver<br/>latest per key]
     S --> G[gold<br/>joins & breakdowns]
 ```
 
+The pipeline is built from contracts, so the target and the orchestrator are replaceable plugins:
+
+| Contract | Defined by | Pluggable part |
+|----------|------------|----------------|
+| **Landing**: one append-only Iceberg table per topic (raw key/value + Kafka metadata) | `ingestion/sql/landing.sql` (generated) | Object storage, Kafka cluster |
+| **Catalog**: Iceberg REST API | `ICEBERG_CATALOG_*` in `.env` | Apache Polaris, Unity Catalog, AWS Glue, Snowflake Open Catalog, Lakekeeper, ... |
+| **Transform**: one dbt project, bronze → silver → gold | `dbt/` | dbt adapter + `dbt/macros/adapter_<target>.sql` (5 small macros) |
+| **Run**: `scripts/pipeline.py` (`ingest deploy\|status\|cancel`, `transform`, `check`) | `scripts/pipeline.py` | Any scheduler/orchestrator calls these |
+
 | Layer  | Contents | Guarantees |
 |--------|----------|------------|
-| bronze | One row per Kafka message ({{ cookiecutter.payload_format }} payload), typed columns + `_op`, `_is_deleted`, `_source_ts_ms`, `_kafka_topic/_partition/_offset/_timestamp`, `_ingested_at` | Append-only, idempotent on (partition, offset): re-runs never duplicate |
-| silver | Latest change per primary key | Out-of-order and replayed events never overwrite newer data; deletes are soft (`_is_deleted = true`) |
-| gold   | Hand-written models joining silver tables (`fct_orders`, `customer_order_summary`) or splitting one (`dim_customer_addresses`) | Exclude deleted rows |
+| landing | Raw Kafka records in Iceberg, committed every `FLINK_CHECKPOINT_INTERVAL` (10 s) | Append-only, exactly-once (Flink checkpoints); never fails on payload changes |
+| bronze | One typed row per message ({{ cookiecutter.payload_format }}) + `_op`, `_is_deleted`, `_source_ts_ms`, `_kafka_*`, `_ingested_at` | Idempotent on (partition, offset): re-runs never duplicate |
+| silver | Latest change per primary key | Out-of-order and replayed events never overwrite newer data; deletes are soft (`_is_deleted`) |
+| gold   | Hand-written models: joins (`fct_orders`, `customer_order_summary`) and breakdowns (`dim_customer_addresses`) | Exclude deleted rows |
 
-Which change is the latest: {% if cookiecutter.payload_format == 'debezium' %}Debezium `ts_ms`, then Kafka offset{% else %}Kafka offset. Producers must key messages by primary key, so each key stays in one partition{% endif %}.
-
-Target-specific details (setup, operations): **[docs/target.md](docs/target.md)**.
-{%- if cookiecutter.streaming_engine == 'flink' %}
-Streaming engine (Apache Flink keeps bronze/silver continuously up to date): **[docs/streaming.md](docs/streaming.md)**.
-{%- endif %}
-{%- if cookiecutter.orchestrator == 'dagster' %}
-Orchestration (Dagster, open source; `make dagster`): **[docs/orchestration.md](docs/orchestration.md)**.
+Target details: **[docs/target.md](docs/target.md)**.
+{%- if cookiecutter.orchestrator != 'none' %}
+Orchestration: **[docs/orchestration.md](docs/orchestration.md)**.
 {%- endif %}
 
 ## Quick start
@@ -35,28 +41,31 @@ cp .env.example .env
 make help
 ```
 
-`make up` starts a local Kafka (plus Postgres for the Postgres target) with Docker Compose.
-`make sample-phase1` / `make sample-phase2` produce a deterministic set of customer/order changes
-(creates, updates, a delete and an out-of-order replay) for trying the pipeline out.
+`make up` starts the local lakehouse: Kafka, Flink with its SQL Gateway, an Iceberg REST catalog and S3-compatible
+storage. `make ingest-deploy` starts the landing job. `make sample-phase1` and `make sample-phase2` produce a
+deterministic set of customer/order changes: creates, updates, a delete and an out-of-order replay.
 
 ## Add or change an entity
 
 1. Edit `config/pipeline.yml`: topic, primary key, typed columns.
-2. `make generate`: validates the config and regenerates the derived files. CI runs `make check-generated`.
-3. Add or adjust gold models.
+2. `make generate` regenerates the landing job and the dbt bronze/silver models. CI runs `make check-generated`.
+3. Redeploy the landing job (`python scripts/pipeline.py ingest deploy --replace`) and add or adjust gold models.
 
 Supported column types: `string, integer, bigint, double, boolean, date, timestamp` (ISO-8601),
-`timestamp_ms`, `timestamp_us` (epoch), `decimal(p,s)`.
-
-The `customers` / `orders` entities and the gold models are examples. Replace them with your own.
+`timestamp_ms`, `timestamp_us` (epoch), `decimal(p,s)`. The `customers` / `orders` entities and the gold models are
+examples; replace them with your own.
 
 ## Layout
 
 ```
-config/pipeline.yml        single source of truth (entities, payload format)
-scripts/generate.py        validates config, runs the target generator (scripts/plugin_generate.py)
-scripts/produce_sample_events.py
-compose.yaml               local Kafka (target services in compose.override.yaml)
-target.mk                  target-specific make targets (included by Makefile)
-docs/target.md             target-specific documentation
+config/pipeline.yml          single source of truth (entities, payload format, landing namespace)
+ingestion/                   Kafka -> Iceberg landing (Flink SQL, target-agnostic)
+  landing.py                 deploy / status / cancel via Flink SQL Gateway + REST
+  sql/landing.sql            generated Flink job
+  flink/                     Flink image: pinned Kafka + Iceberg jars
+dbt/                         bronze/silver (generated) and gold models, adapter interface macros
+scripts/pipeline.py          the run contract used by make and orchestrators
+scripts/generate.py          validates config, renders generated files
+compose.yaml                 local lakehouse
+target.mk, docs/target.md    target plugin
 ```

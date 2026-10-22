@@ -1,0 +1,30 @@
+# DuckDB reads the Iceberg landing tables through the Iceberg REST catalog (attached as `lake`)
+# and writes bronze/silver/gold into a local DuckDB file.
+{{ cookiecutter.project_slug }}:
+  target: "{% raw %}{{ env_var('DBT_TARGET', 'dev') }}{% endraw %}"
+  outputs:
+    dev: &duckdb
+      type: duckdb
+      path: "{% raw %}{{ env_var('DUCKDB_PATH', 'warehouse.duckdb') }}{% endraw %}"
+      schema: dev
+      threads: 4
+      extensions: [httpfs, avro, iceberg]
+      secrets:
+        - type: s3
+          key_id: "{% raw %}{{ env_var('LANDING_S3_ACCESS_KEY', 'lakeadmin') }}{% endraw %}"
+          secret: "{% raw %}{{ env_var('LANDING_S3_SECRET_KEY', 'lakeadmin-secret') }}{% endraw %}"
+          endpoint: "{% raw %}{{ env_var('LANDING_S3_ENDPOINT', 'localhost:9000') }}{% endraw %}"
+          region: "{% raw %}{{ env_var('LANDING_S3_REGION', 'us-east-1') }}{% endraw %}"
+          url_style: path
+          use_ssl: "{% raw %}{{ (env_var('LANDING_S3_USE_SSL', 'false') | lower == 'true') | as_bool }}{% endraw %}"
+      attach:
+        - path: "{% raw %}{{ env_var('LANDING_WAREHOUSE', 'warehouse') }}{% endraw %}"
+          alias: lake
+          type: iceberg
+          read_only: true
+          options:
+            endpoint: "{% raw %}{{ env_var('LANDING_CATALOG_URI', 'http://localhost:8181') }}{% endraw %}"
+            authorization_type: none
+    prod:
+      <<: *duckdb
+      schema: analytics

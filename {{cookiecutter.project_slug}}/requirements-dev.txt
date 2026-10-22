@@ -1,0 +1,4 @@
+-r requirements.txt
+boto3>=1.34          # local stack only: creates the S3 bucket
+pytest>=8
+testcontainers>=4.4

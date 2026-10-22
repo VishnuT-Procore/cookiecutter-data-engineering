@@ -13,7 +13,6 @@
       warehouse: "{% raw %}{{ env_var('SNOWFLAKE_WAREHOUSE', 'TRANSFORMING') }}{% endraw %}"
       schema: "{% raw %}{{ env_var('SNOWFLAKE_SCHEMA', 'DEV') }}{% endraw %}"
       threads: 8
-      client_session_keep_alive: false
     prod:
       <<: *snowflake
       schema: ANALYTICS

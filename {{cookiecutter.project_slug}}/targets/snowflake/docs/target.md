@@ -1,33 +1,30 @@
-# Snowflake target
+# Target: Snowflake
 
 ```
-Kafka ──► Kafka Connect + Snowflake Kafka Connector (Snowpipe Streaming) ──► RAW.<ENTITY>
-      ──► dbt: bronze ──► silver ──► gold
+Flink ──► Iceberg landing (REST catalog + object storage)
+              │  catalog integration + external volume, AUTO_REFRESH
+              ▼
+        <DB>.<LANDING>.<ENTITY>  (Snowflake Iceberg tables, read-only)
+              │  dbt-snowflake
+              ▼
+        bronze ──► silver ──► gold   (native Snowflake tables)
 ```
 
-| Layer  | Where                         | How                                                                        |
-|--------|-------------------------------|----------------------------------------------------------------------------|
-| raw    | `<DB>.<RAW_SCHEMA>.<ENTITY>`  | [Snowflake Kafka Connector](https://github.com/snowflakedb/snowflake-kafka-connector) (Apache-2.0) using Snowpipe Streaming. Tables have `RECORD_METADATA` and `RECORD_CONTENT` VARIANT columns. Records that fail conversion go to the DLQ topic `<project>.dlq.snowflake`. |
-| bronze | `<schema>_BRONZE.BRONZE_<E>`  | dbt incremental `merge` on `(partition, offset)`: typed change log with `_op`, `_is_deleted` and Kafka metadata. |
-| silver | `<schema>_SILVER.SILVER_<E>`  | dbt incremental `merge` on the primary key: the latest change per key. Out-of-order events can't overwrite newer rows. |
-| gold   | `<schema>_GOLD.*`             | Hand-written dbt models in `dbt/models/gold/`. |
+## Setup
 
-## Set up
-
-1. Run `ingestion/setup.sql` in Snowflake. It creates the database, raw schema, roles, service users and warehouse.
-2. On your Kafka Connect cluster, install the Snowflake Kafka Connector jar (Maven Central:
-   `com.snowflake:snowflake-kafka-connector`) and enable the file config provider (see
-   `ingestion/snowflake.properties.example`).
-3. Deploy the generated connector config: `KAFKA_CONNECT_URL=http://connect:8083 make deploy-connector`.
-   `ingestion/connector.json` is regenerated from `config/pipeline.yml` by `make generate`.
+1. Point the landing job at a REST catalog Snowflake can reach: Apache Polaris / Snowflake Open Catalog, AWS Glue
+   (Iceberg REST), Unity Catalog, and so on. Set `ICEBERG_CATALOG_URI`, `ICEBERG_WAREHOUSE` and
+   `ICEBERG_CATALOG_PROPERTIES` in `.env`, then run `make ingest-deploy`.
+2. Run `snowflake/setup.sql` once: database, warehouse, external volume, catalog integration, dbt role and user.
+3. Run `snowflake/landing_tables.sql`. It is generated from `config/pipeline.yml` and has one
+   `CREATE ICEBERG TABLE … CATALOG_TABLE_NAME … AUTO_REFRESH = TRUE` per entity. Re-run it after adding entities.
 4. `cp .env.example .env`, fill in the dbt credentials, then run `make install transform`.
 
-Debezium sources should use `value.converter.schemas.enable=false`. Schema-wrapped envelopes are also handled.
+## Notes
 
-## Operate
-
-* **Schedule:** run `make transform` from any scheduler. Each run reads only raw rows newer than the
-  bronze watermark (`SnowflakeConnectorPushTime`) minus `lookback_minutes`.
-* **Reprocess:** `dbt build --full-refresh --select silver_<e>+`.
-* **Lower latency:** run dbt more often, or turn silver into a Snowflake Dynamic Table over bronze using the same
-  `qualify row_number()` logic.
+* Landing tables are append-only, so Snowflake never has to read Iceberg row-level deletes.
+* Freshness in Snowflake = Flink commit interval + catalog refresh interval (set `REFRESH_INTERVAL_SECONDS` on the
+  integration if needed) + dbt schedule.
+* Landing column names are lower-case Iceberg names and are quoted by `snowflake__landing_col`. If your
+  integration resolves identifiers case-insensitively, set `vars: {quote_landing_columns: false}`.
+* Verify the integration with `SELECT SYSTEM$VERIFY_CATALOG_INTEGRATION('<name>')`.

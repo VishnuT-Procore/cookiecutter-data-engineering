@@ -16,28 +16,21 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -v tests
 
-  # Generate projects and run each project's own test suite.
+  # Generate projects and run each project's own test suite:
+  # duckdb = full end-to-end on the local lakehouse; databricks/snowflake = offline checks.
   generated-project:
     needs: bake
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target: [postgres, snowflake, databricks]
-        payload_format: [debezium, json]
-        streaming_engine: [none]
+        target: [duckdb, databricks, snowflake]
+        payload_format: [debezium]
         orchestrator: [dagster]
         include:
-          - {target: postgres, payload_format: debezium, streaming_engine: none, orchestrator: none}
-          - {target: postgres, payload_format: debezium, streaming_engine: flink, orchestrator: dagster}
-          - {target: postgres, payload_format: json, streaming_engine: flink, orchestrator: none}
+          - {target: duckdb, payload_format: json, orchestrator: none}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        if: matrix.target == 'databricks'
-        with:
-          distribution: temurin
-          java-version: "17"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -45,8 +38,7 @@ jobs:
         run: |
           python -m pip install cookiecutter
           cookiecutter . --no-input -o "$RUNNER_TEMP/out" \
-            target=${{ matrix.target }} payload_format=${{ matrix.payload_format }} \
-            streaming_engine=${{ matrix.streaming_engine }} orchestrator=${{ matrix.orchestrator }}
+            target=${{ matrix.target }} payload_format=${{ matrix.payload_format }} orchestrator=${{ matrix.orchestrator }}
       - name: Test generated project
         working-directory: ${{ runner.temp }}/out/orders_medallion
         run: |

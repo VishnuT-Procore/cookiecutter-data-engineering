@@ -1,0 +1,14 @@
+{{ cookiecutter.project_slug }}:
+  target: "{% raw %}{{ env_var('DBT_TARGET', 'dev') }}{% endraw %}"
+  outputs:
+    dev: &databricks
+      type: databricks
+      host: "{% raw %}{{ env_var('DATABRICKS_HOST') }}{% endraw %}"
+      http_path: "{% raw %}{{ env_var('DATABRICKS_HTTP_PATH') }}{% endraw %}"
+      token: "{% raw %}{{ env_var('DATABRICKS_TOKEN') }}{% endraw %}"
+      catalog: "{% raw %}{{ env_var('DATABRICKS_CATALOG', 'main') }}{% endraw %}"
+      schema: "{% raw %}{{ env_var('DATABRICKS_SCHEMA', 'dev') }}{% endraw %}"
+      threads: 8
+    prod:
+      <<: *databricks
+      schema: analytics

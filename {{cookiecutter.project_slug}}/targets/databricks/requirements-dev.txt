@@ -1,5 +1,0 @@
--r requirements.txt
-confluent-kafka>=2.5,<3
-pyspark>=3.5,<3.6
-delta-spark>=3.2,<3.4
-pytest>=8

@@ -1,0 +1,7 @@
+dbt-duckdb>=1.9,<2
+duckdb>=1.5,<1.6
+# DuckDB extensions from PyPI: work behind proxies that block extensions.duckdb.org.
+duckdb-extensions>=1.5,<1.6
+duckdb-extension-httpfs>=1.5,<1.6
+duckdb-extension-avro>=1.5,<1.6
+duckdb-extension-iceberg>=1.5,<1.6

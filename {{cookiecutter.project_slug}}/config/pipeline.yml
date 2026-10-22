@@ -1,8 +1,7 @@
-# Single source of truth for the pipeline.
+# Single source of truth for the pipeline. After editing run `make generate`
+# (CI runs `make check-generated`).
 #
-# Every entity is one Kafka topic. Its changes land in bronze (append-only change log),
-# the latest version per primary key is kept in silver, and gold models are hand-written
-# on top of silver. After editing this file run `make generate` (CI runs `make check-generated`).
+#   Kafka --(Flink, append-only)--> Iceberg landing --(dbt on the target)--> bronze --> silver --> gold
 #
 # Column types: string, integer, bigint, double, boolean, date, timestamp (ISO-8601 string),
 #               timestamp_ms / timestamp_us (epoch millis / micros), decimal(p,s)
@@ -14,12 +13,8 @@ target: {{ cookiecutter.target }}
 # json:     value is the full row; a tombstone (null value) deletes the key; ordering by Kafka offset.
 payload_format: {{ cookiecutter.payload_format }}
 
-# none:  bronze/silver are built in micro-batches by the target's tooling (minutes of latency).
-# flink: an Apache Flink job keeps bronze/silver continuously up to date (seconds of latency).
-streaming_engine: {{ cookiecutter.streaming_engine }}
-
-# Namespace where raw Kafka records land (Postgres/Snowflake schema; Databricks uses bronze directly).
-raw_schema: {{ cookiecutter.raw_schema }}
+# Iceberg namespace of the landing tables (one table per entity, raw Kafka records).
+landing_namespace: {{ cookiecutter.landing_namespace }}
 
 entities:
   - name: customers

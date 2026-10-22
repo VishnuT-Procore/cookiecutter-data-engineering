@@ -2,33 +2,24 @@
   "project_name": "Orders Medallion",
   "project_slug": "{{ cookiecutter.project_name.lower().strip().replace(' ', '_').replace('-', '_') }}",
   "author_name": "Data Engineering",
-  "target": [
-    "postgres",
-    "snowflake",
-    "databricks"
-  ],
-  "payload_format": [
-    "debezium",
-    "json"
-  ],
-  "streaming_engine": [
-    "none",
-    "flink"
-  ],
-  "orchestrator": [
-    "dagster",
-    "none"
-  ],
+  "target": ["duckdb", "databricks", "snowflake"],
+  "orchestrator": ["dagster", "none"],
+  "payload_format": ["debezium", "json"],
   "topic_prefix": "app.public",
-  "raw_schema": "raw",
+  "landing_namespace": "landing",
   "__prompts__": {
     "project_name": "Project name",
     "project_slug": "Project slug (lowercase, underscores)",
     "target": {
-      "__prompt__": "Target platform",
-      "postgres": "Postgres (Python consumer + dbt-postgres)",
-      "snowflake": "Snowflake (Snowflake Kafka Connector + dbt-snowflake)",
-      "databricks": "Databricks (Spark Structured Streaming + Delta Lake)"
+      "__prompt__": "Transform target (reads the Iceberg landing tables, builds bronze/silver/gold with dbt)",
+      "duckdb": "DuckDB (local, fully open source; dev and CI)",
+      "databricks": "Databricks (dbt-databricks; landing via Unity Catalog Iceberg REST)",
+      "snowflake": "Snowflake (dbt-snowflake; landing via Iceberg catalog integration)"
+    },
+    "orchestrator": {
+      "__prompt__": "Orchestrator",
+      "dagster": "Dagster (open source): assets, schedules, sensors; dbt tests as asset checks",
+      "none": "None: call the pipeline CLI / make targets from your own scheduler"
     },
     "payload_format": {
       "__prompt__": "Kafka message format",
@@ -36,32 +27,21 @@
       "json": "Plain JSON row per message, tombstone (null value) = delete"
     },
     "topic_prefix": "Kafka topic prefix for the example entities",
-    "raw_schema": "Schema/table namespace where raw Kafka records land",
-    "streaming_engine": {
-      "__prompt__": "Streaming engine for bronze/silver",
-      "none": "None: micro-batch (minutes of latency)",
-      "flink": "Apache Flink: continuous bronze/silver (seconds of latency, Postgres target only)"
-    },
-    "orchestrator": {
-      "__prompt__": "Orchestrator",
-      "dagster": "Dagster (open source): assets, schedules, dbt tests as asset checks",
-      "none": "None: use make targets / your own scheduler"
-    }
+    "landing_namespace": "Iceberg namespace for the landing tables"
   },
   "_copy_without_render": [
     "scripts/*",
+    "ingestion/*.py",
+    "ingestion/flink/*.py",
+    "dbt/macros/*",
+    "dbt/models/*",
+    "dbt/tests/*",
+    "tests/*",
+    ".github/*",
+    "targets/*/dbt/macros/*",
     "targets/*/scripts/*",
     "targets/*/tests/*",
-    "targets/*/ingestion/*.py",
-    "targets/*/dbt/macros/*",
-    "targets/*/dbt/models/*",
-    "targets/*/src/*",
-    "targets/*/gold/*",
-    "targets/*/.github/*",
-    "engines/*/*/scripts/*",
-    "engines/*/*/tests/*",
-    "engines/*/*/flink/*.py",
-    "orchestrators/*/*/orchestration/*",
-    "orchestrators/*/*/tests/*"
+    "orchestrators/*/orchestration/*",
+    "orchestrators/*/tests/*"
   ]
 }

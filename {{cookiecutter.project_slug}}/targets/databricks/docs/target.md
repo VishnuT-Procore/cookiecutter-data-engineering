@@ -1,40 +1,32 @@
-# Databricks target
+# Target: Databricks
 
 ```
-Kafka ──► Structured Streaming ──► bronze.<entity> (Delta, append-only change log)
-      ──► Structured Streaming foreachBatch + Delta MERGE ──► silver.<entity> (latest per key)
-      ──► gold/*.sql (CREATE OR REPLACE TABLE ... AS SELECT) ──► gold.*
+Flink ──► Unity Catalog Iceberg REST endpoint ──► <uc_catalog>.<landing>.<entity>  (managed Iceberg, append-only)
+                                                        │  dbt-databricks
+                                                        ▼
+                                      bronze ──► silver ──► gold   (Delta tables)
 ```
 
-Built on open source: Apache Spark Structured Streaming and Delta Lake. It's deployed with a
-[Databricks Asset Bundle](https://docs.databricks.com/en/dev-tools/bundles/index.html) (`databricks.yml`).
+## Setup
 
-| Layer  | Code                         | Notes                                                                       |
-|--------|------------------------------|-----------------------------------------------------------------------------|
-| bronze | `src/medallion/bronze.py`    | One stream per topic. Every message is kept, typed via `from_json`, with `_op`, `_is_deleted`, Kafka metadata, `_raw_key` / `_raw_value`. Unparseable rows have `_is_valid = false`. Exactly-once through Delta and checkpoints. |
-| silver | `src/medallion/silver.py`    | Streams bronze, keeps the newest change per key in each micro-batch, then `MERGE ... WHEN MATCHED AND <source is newer>`. Replays and out-of-order events never win. Deletes are soft (`_is_deleted`). |
-| gold   | `gold/*.sql`                 | Run in name order by `medallion gold`. `${bronze}`, `${silver}` and `${gold}` are replaced with `<catalog>.<schema>`. |
+1. In Unity Catalog, enable external data access on the metastore and create the landing schema. Give the
+   principal Flink uses `EXTERNAL USE SCHEMA` plus write privileges on it.
+2. Point the landing job at Unity Catalog's Iceberg REST endpoint in `.env`:
+   ```
+   ICEBERG_CATALOG_URI=https://<workspace-host>/api/2.1/unity-catalog/iceberg-rest
+   ICEBERG_WAREHOUSE=<uc_catalog>
+   ICEBERG_CATALOG_PROPERTIES={"token": "<token>", "header.X-Iceberg-Access-Delegation": "vended-credentials"}
+   ```
+   For a service principal, use the Iceberg OAuth properties (`credential`, `oauth2-server-uri`, `scope`) instead of
+   `token`. Then run `make ingest-deploy`.
+3. `cp .env.example .env`, fill in `DATABRICKS_*` and `LANDING_DATABASE=<uc_catalog>`, then run
+   `make install transform`.
 
-## Run
+## Notes
 
-```bash
-python -m venv .venv && source .venv/bin/activate
-make install && make test               # local Spark + Delta (Java 17 required)
-
-databricks auth login --host <workspace-url>
-# edit the variables in databricks.yml (catalog, kafka_bootstrap_servers, checkpoint_root, ...)
-make validate deploy run                # BUNDLE_TARGET=dev by default
-```
-
-**Kafka credentials:** create a secret scope with a key `kafka-options` that holds a JSON object of extra Kafka source
-options, for example `{"kafka.security.protocol": "SASL_SSL", "kafka.sasl.mechanism": "PLAIN", "kafka.sasl.jaas.config": "..."}`.
-Then set the bundle variable `kafka_secret_scope`.
-
-## Operate
-
-* **Batch-style (default):** `trigger=availableNow`. The job runs bronze → silver → gold every 15 minutes
-  (unpause the schedule).
-* **Continuous:** set `trigger` to an interval (e.g. `"1 minute"`) and run bronze and silver as separate
-  continuous jobs. Schedule gold on its own.
-* **New columns:** add them to `config/pipeline.yml`. Schema auto-merge adds them to bronze and silver.
-* **Reprocess:** delete the silver checkpoint directory and the silver table, then rerun silver. It replays bronze.
+* External engines writing to managed Iceberg tables through Unity Catalog launched as Public Preview, and support
+  is still changing. Check the current Databricks documentation for status and limitations.
+* Landing tables are append-only, so Databricks never has to read Iceberg row-level deletes, which it doesn't
+  support for Iceberg v2.
+* Any other REST catalog that Unity Catalog can federate also works. Only the `ICEBERG_*` and `LANDING_*`
+  variables change.
